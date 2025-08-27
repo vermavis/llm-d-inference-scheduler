@@ -71,8 +71,13 @@ func (p *PrefillHeaderHandler) WithName(name string) *PrefillHeaderHandler {
 
 // PreRequest wires prefill SchedulerProfile result into a header to indicate prefill worker
 func (p *PrefillHeaderHandler) PreRequest(ctx context.Context, request *types.LLMRequest, schedulingResult *types.SchedulingResult, targetPort int) {
+	// Debug: Check tracer provider status
 	tracer := otel.GetTracerProvider().Tracer("llm-d-epp")
+	fmt.Printf("EPP DEBUG: TracerProvider type: %T\n", otel.GetTracerProvider())
+	fmt.Printf("EPP DEBUG: Tracer type: %T\n", tracer)
+	
 	_, span := tracer.Start(ctx, "epp.pd_prerequest")
+	fmt.Printf("EPP DEBUG: Span type: %T\n", span)
 	defer span.End()
 
 	// Add component attribute to distinguish this part of the system
