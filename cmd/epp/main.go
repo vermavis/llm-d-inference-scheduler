@@ -25,17 +25,37 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"os"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
 	"sigs.k8s.io/gateway-api-inference-extension/cmd/epp/runner"
 
 	"github.com/llm-d/llm-d-inference-scheduler/pkg/plugins"
+
+	"go.uber.org/zap/zapcore"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func main() {
 	ctx := ctrl.SetupSignalHandler()
+	ctrl.SetLogger(zap.New(zap.UseDevMode(false), zap.Level(zapcore.InfoLevel)))
 
+	// Initialize OpenTelemetry (opt-in via env).
+	shutdown, err := initOTel(ctx)
+	if err != nil {
+		ctrl.Log.Error(err, "failed to init OpenTelemetry")
+	} else {
+		defer func() {
+			_ = shutdown(context.Background())
+		}()
+	}
 	// Register GIE plugins
 	runner.RegisterAllPlugins()
 
@@ -45,4 +65,31 @@ func main() {
 	if err := runner.NewRunner().Run(ctx); err != nil {
 		os.Exit(1)
 	}
+}
+
+// initOTel sets a TracerProvider that exports to OTLP if env is configured.
+func initOTel(ctx context.Context) (func(context.Context) error, error) {
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		// No endpoint provided -> keep default no-op provider (opt-in behavior).
+		return func(context.Context) error { return nil }, nil
+	}
+
+	opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
+	if os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true" {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+
+	exp, err := otlptracegrpc.New(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exp),
+	)
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	return tp.Shutdown, nil
 }
